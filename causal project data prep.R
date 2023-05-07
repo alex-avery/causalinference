@@ -2,7 +2,7 @@
 # SEXUAL VIOLENCE AS A TACTIC FOR TERRITORIAL CONTROL
 # REPLICATION DATA: DATA PREP
 # ALEX AVERY
-# LAST UPDATED: 05/03/23
+# LAST UPDATED: 05/07/23
 #-------------------------------------------------------------------------------
 
 
@@ -10,18 +10,17 @@
 # PREP
 #-------------------------------------------------------------------------------
 # load packages
+library(readr)
 library(geojsonio)
 library(raster)
-#library(rgeos)
 library(sf)
 library(geosphere)
-library(readr)
 library(lubridate)
 library(tidyverse)
 library(parallel)
 
 # set wd
-setwd("~/Documents/WUSTL/Third Year Paper/Data")
+setwd("~/Documents/GitHub/causalinference")
 #-------------------------------------------------------------------------------
 
 
@@ -139,7 +138,7 @@ drc_cities_panel$obs_id <- as.numeric(row.names(drc_cities_panel))
 #-------------------------------------------------------------------------------
 # ACLED DATA
 #-------------------------------------------------------------------------------
-acled <- read_csv("acled_data_04_05_23.csv")
+acled <- read_csv("Data/acled_data_05_07_23.csv")
 
 # subset down to changes in territory
 acled <- acled[acled$disorder_type == 'Political violence' | 
@@ -152,6 +151,8 @@ acled <- acled[acled$sub_event_type == 'Government regains territory' |
 acled <- acled[acled$sub_event_type != 'Non-violent transfer of territory',]
 
 # create terr control variable
+# 1 - government control, 2 - nsa control
+unique(acled$sub_event_type)
 acled$terr_control <- ifelse(acled$sub_event_type == 'Government regains territory',
                              1, 2)
 
@@ -159,7 +160,7 @@ acled$terr_control <- ifelse(acled$sub_event_type == 'Government regains territo
 acled <- acled[acled$year >= 2020,]
 
 # Format event date
-acled$newdate <- lubridate::dmy(acled$event_date)
+acled$newdate <- dmy(acled$event_date)
 acled$sub_date <- substr(acled$newdate, start = 1, stop = 7)
 acled$month_date <- paste0(acled$sub_date, '-01')
 
@@ -197,7 +198,7 @@ acled_gov <- acled %>%
 acled_gov <- acled_gov %>%
   group_by(month_date) %>%
   mutate(acled_gov_control = n()) %>%
-  select(month_date, acled_gov_control) %>%
+  dplyr::select(month_date, acled_gov_control) %>%
   distinct(month_date, acled_gov_control)
 
 # how many nonstate gains in territory a month
@@ -207,7 +208,7 @@ acled_non_state <- acled %>%
 acled_non_state <- acled_non_state %>%
   group_by(month_date) %>%
   mutate(acled_nsa_control = n()) %>%
-  select(month_date, acled_nsa_control) %>%
+  dplyr::select(month_date, acled_nsa_control) %>%
   distinct(month_date, acled_nsa_control)
 
 # merge back in control variables
@@ -223,9 +224,9 @@ acled$acled_nsa_control <- ifelse(is.na(acled$acled_nsa_control) == TRUE, 0,
 # let's just look at the drc for now
 acled_drc <- acled[acled$country == 'Democratic Republic of Congo', ]
 
-# create sf object
-acled_drc_sf <- st_as_sf(acled_drc, coords = c('acled_lon', 'acled_lat'), crs = 4326)
+# only needed when working with grid data
 
+#acled_drc_sf <- st_as_sf(acled_drc, coords = c('acled_lon', 'acled_lat'), crs = 4326)
 # class(acled_drc_sf) <- 'sf'
 #-------------------------------------------------------------------------------
 
@@ -240,20 +241,14 @@ acled_drc_sf <- st_as_sf(acled_drc, coords = c('acled_lon', 'acled_lat'), crs = 
 # in the DRC, Ethiopia, Nigeria, South Sudan, Sudan and Ukraine.
 
 # load CRSV data
-crsv <- read_csv("crsv_data_04_05_23.csv")
+crsv <- read_csv("Data/crsv_data_04_05_23.csv")
 
+# lot's of new countries!
 unique(crsv$country)
-# drop Ukraine case
-crsv <- crsv[crsv$country != 'Ukraine',]
-# countries: DRC, South Sudan, Sudan, Nigeria, Ukraine, Ethiopia
 
-# remove first row (header)
-crsv <- crsv[-1,]
-
-# remove some duplicated obs
+# make sure no duplicates 
 crsv <- crsv %>%
-  rename(crsv_event_id = 'SiND Event ID') %>%
-  distinct(crsv_event_id, .keep_all = TRUE)
+  distinct(`SiND Event ID`, .keep_all = TRUE)
 
 # create year variable
 crsv$year <- substr(crsv$date, start = 7, stop = 10)
@@ -262,19 +257,11 @@ crsv$year <- substr(crsv$date, start = 7, stop = 10)
 crsv$Longitude <- as.numeric(crsv$Longitude)
 crsv$Latitude <- as.numeric(crsv$Latitude)
 
-# rename variables
-crsv <- crsv %>%
-  rename(longitude = Longitude) %>%
-  rename(latitude = Latitude) %>%
-  rename(admin1 = 'Admin 1') %>%
-  rename(char_iso = `Country ISO`) 
-
 # create new reported perpetrator factor
 crsv$rep_perp <- crsv$'Reported Perpetrator'
 
 unique(crsv$rep_perp)
 
-crsv$rep_perp <- str_replace(crsv$rep_perp, 'State military', 'State Actor')
 crsv$rep_perp <- str_replace(crsv$rep_perp, 'State Military', 'State Actor')
 crsv$rep_perp <- str_replace(crsv$rep_perp, 'Police', 'State Actor')
 crsv$rep_perp <- str_replace(crsv$rep_perp, 'NSA', 'Non State Actor')
@@ -283,37 +270,40 @@ crsv$rep_perp <- str_replace(crsv$rep_perp, 'No Information', 'NA')
 crsv$rep_perp <- str_replace(crsv$rep_perp, 'Employee', 'Other')
 crsv$rep_perp <- str_replace(crsv$rep_perp, 'Criminal', 'Other')
 crsv$rep_perp <- str_replace(crsv$rep_perp, 'Civilian', 'Other')
+crsv$rep_perp <- str_replace(crsv$rep_perp, 'Patient or Family', 'Other')
 crsv$rep_perp <- str_replace(crsv$rep_perp, 'Non State ActorG', 'Non State Actor')
 
 unique(crsv$rep_perp)
 
-crsv$perp_fact <- as.factor(crsv$rep_perp)
-
 # Format event Dates for CRSV 
 crsv$newdate <-  strptime(as.character(crsv$date), "%d/%m/%Y")
 crsv$newdate <- format(crsv$newdate, "%Y-%m-%d")
-crsv$newdate <- lubridate::ymd(crsv$newdate)
+crsv$newdate <- ymd(crsv$newdate)
 crsv$sub_date <- substr(crsv$newdate, start = 1, stop = 7)
 crsv$month_date <- paste0(crsv$sub_date, '-01')
 
 # only keep relevant variables
 crsv <- crsv %>%
-  dplyr::select(country, char_iso, latitude, longitude, rep_perp, 'Survivor Or Victim Sex', 
-         'Number of reported victims', newdate, month_date, crsv_event_id, perp_fact) %>%
-  rename(crsv_victim_sex = 'Survivor Or Victim Sex') %>%
-  rename(crsv_num_victim = 'Number of reported victims') %>%
-  rename(crsv_date = newdate) %>% 
-  rename(crsv_lat = latitude) %>%
-  rename(crsv_lon = longitude) %>%
+  rename(char_iso = 'Country ISO') %>%
+  rename(crsv_lat = Latitude) %>%
+  rename(crsv_lon = Longitude) %>%
+  rename(crsv_event_id = 'SiND Event ID') %>%
   rename(crsv_rep_perp = rep_perp) %>%
-  rename(crsv_perp_fact = perp_fact) %>%
-  relocate(crsv_event_id, crsv_date, month_date, crsv_num_victim)
+  rename(crsv_vics = 'Number of reported victims') %>%
+  rename(crsv_date = newdate) %>%
+  dplyr::select(c(country, char_iso, crsv_lat, crsv_lon, crsv_event_id, crsv_rep_perp,
+                  month_date, crsv_date, crsv_vics)) %>%
+  relocate(crsv_event_id, crsv_date, month_date, crsv_rep_perp)
 
-# create number of crsv events & number of victims per month variable
+# create number of crsv events per month
 crsv <- crsv %>%
   group_by(month_date) %>%
-  mutate(crsv_num_events = n()) %>%
-  mutate(crsv_month_vic = sum(crsv_num_victim))
+  mutate(crsv_num_events = n())
+
+# create number of crsv victims per month 
+crsv <- crsv %>%
+  group_by(month_date) %>%
+  mutate(crsv_mon_vics = sum(crsv_vics))
 
 # create number of reported government perps per month
 crsv_gov <- crsv %>%
@@ -339,14 +329,16 @@ crsv_nsa <- crsv_nsa %>%
 crsv <- left_join(crsv, crsv_gov, by = 'month_date')
 crsv <- left_join(crsv, crsv_nsa, by = 'month_date')
 
-crsv$crsv_event_id <- as.numeric(crsv$crsv_event_id)
+# remove intermediate step
+rm(crsv_gov)
+rm(crsv_nsa)
 
 # again, let's just look at the DRC for now
 crsv_drc <- crsv[crsv$country == 'DRC',]
 
-# create sf object if working with grid data
-crsv_drc_sf <- st_as_sf(crsv_drc, coords = c('crsv_lon', 'crsv_lat'), crs = 4326)
+# only needed when working with grid data
 
+#crsv_drc_sf <- st_as_sf(crsv_drc, coords = c('crsv_lon', 'crsv_lat'), crs = 4326)
 # class(crsv_drc_sf) <- 'sf'
 #-------------------------------------------------------------------------------
 
@@ -406,8 +398,6 @@ distances <- apply(cbind(drc_cities_sf$longitude, drc_cities_sf$latitude), 1,
 
 # transpose distances matrix
 distances <- t(distances)
-
-# change to data frame
 distances <- as.data.frame(distances)
 
 # add column names
@@ -456,6 +446,8 @@ distances <- distances %>%
 
 # join datasets
 acled_drc <- left_join(acled_drc, distances, by = 'acled_event_id')
+
+rm(distances)
 #-------------------------------------------------------------------------------
 
 
@@ -507,8 +499,6 @@ crsv_drc <- crsv_drc %>%
 #-------------------------------------------------------------------------------
 # JOIN CRSV EVENTS & DRC CITIES
 #-------------------------------------------------------------------------------
-rm(distances)
-
 # Calculate the distances between the center point and each other point
 distances <- apply(cbind(drc_cities_sf$longitude, drc_cities_sf$latitude), 1,
                    function(x) 
@@ -516,8 +506,6 @@ distances <- apply(cbind(drc_cities_sf$longitude, drc_cities_sf$latitude), 1,
 
 # transpose distances matrix
 distances <- t(distances)
-
-# change to data frame
 distances <- as.data.frame(distances)
 
 # add column names
@@ -567,6 +555,8 @@ distances <- distances %>%
 
 # join datasets
 crsv_drc <- left_join(crsv_drc, distances, by = 'crsv_event_id')
+
+rm(distances)
 #-------------------------------------------------------------------------------
 
 
@@ -581,7 +571,6 @@ crsv_drc <- left_join(crsv_drc, distances, by = 'crsv_event_id')
 # country level controls:
   # Gender equality 
   # polity score 
-  
 #-------------------------------------------------------------------------------
 
 
@@ -672,54 +661,28 @@ drc_cities_df <- left_join(drc_cities_df, crsv_drc, by = c('city_id', 'month_dat
 drc_cities_df$crsv_event <- ifelse(is.na(drc_cities_df$crsv_event_id) == TRUE,
                                     0, 1)
 
-# create number of crsv events 
+# create total number of crsv events per month
 drc_cities_df$total_crsv_event <- ifelse(is.na(drc_cities_df$crsv_num_events) == TRUE,
                                          0, drc_cities_df$crsv_num_events)
 
-# create number of crsv victims
-drc_cities_df$total_crsv_vics <- ifelse(is.na(drc_cities_df$crsv_num_victim) == TRUE,
-                                         0, drc_cities_df$crsv_num_victim)
-# create number of times gov was perp
+# create total number of vics per month
+drc_cities_df$total_crsv_vics <- ifelse(is.na(drc_cities_df$crsv_vics) == TRUE,
+                                        0, drc_cities_df$crsv_vics)
+
+# create number of times gov was perp per month
 drc_cities_df$total_gov_perp <- ifelse(is.na(drc_cities_df$crsv_gov_per) == TRUE,
                                        0, drc_cities_df$crsv_gov_per)
 
-# create number of times nsa was perp
+# create number of times nsa was perp per month
 drc_cities_df$total_nsa_perp <- ifelse(is.na(drc_cities_df$crsv_nsa_per) == TRUE,
                                        0, drc_cities_df$crsv_nsa_per)
 
 # remove duplicate obs
 drc_cities_df <- drc_cities_df %>%
-  distinct(city_id, month_date, crsv_event, total_crsv_event, total_crsv_vics, .keep_all = TRUE)
+  distinct(city_id, month_date, crsv_event, total_crsv_event, total_crsv_vics, total_gov_perp,
+           total_nsa_perp, .keep_all = TRUE)
 drc_cities_df <- drc_cities_df %>%
   distinct(city_id, month_date, .keep_all = TRUE)
-#-------------------------------------------------------------------------------
-
-
-#-------------------------------------------------------------------------------
-# PRELIM MODELS
-#-------------------------------------------------------------------------------
-library(plm)
-library(sandwich)
-library(lmtest)
-
-# possible outcome variables: total_crsv_event, total_crsv_vics, total_gov_perp, 
-# total_nsa_perp
-# possible predictor variables: total_gov_control, total_nsa_control, total_terr_event
-# control: total_acled_fat
-
-city_model <- plm(total_nsa_perp ~ total_gov_control + total_acled_fat, 
-                   data = drc_cities_df,
-                   model = 'within',
-                   index = c('city_id', 'month_date'))
-coeftest(city_model, vcov. = vcovHC(city_model, typw = 'HC2'))
-
-city_model <- plm(total_gov_perp ~ total_nsa_control + total_acled_fat, 
-                  data = drc_cities_df,
-                  model = 'within',
-                  index = c('city_id', 'month_date'))
-coeftest(city_model, vcov. = vcovHC(city_model, typw = 'HC2'))
-
-
 #-------------------------------------------------------------------------------
 
 
